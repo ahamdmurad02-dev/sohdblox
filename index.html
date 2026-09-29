@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sohdblox</title>
+  <style>
+:root { --ink:#0b1220; --panel:#121a2b; --line:#243044; --mute:#8b9bb4; --teal:#3ee0b4; --gold:#ffd166; --text:#e8eef6; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--ink); color: var(--text); font-family: Arial, sans-serif; min-height: 100%; }
+a { color: var(--teal); text-decoration: none; }
+header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: rgba(11,18,32,.94); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.logo { width: 32px; height: 32px; border-radius: 8px; background: var(--teal); color: #072019; display: grid; place-items: center; font-weight: 900; }
+nav { display: flex; gap: 6px; flex-wrap: wrap; }
+nav button, .btn, .btn2 { border: 0; border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit; }
+nav button { background: transparent; color: var(--mute); }
+nav button.active, nav button:hover { background: var(--panel); color: #fff; }
+.btn { background: var(--teal); color: #072019; font-weight: 700; }
+.btn2 { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { margin: 0 0 8px; font-size: 28px; }
+.mute { color: var(--mute); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.card, .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.thumb { height: 110px; border-radius: 8px; background: linear-gradient(135deg,#1b2a44,#0f1724); display: grid; place-items: center; color: var(--teal); font-size: 32px; font-weight: 900; margin-bottom: 8px; }
+input, textarea, select { width: 100%; background: var(--ink); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
+.auth { max-width: 360px; margin: 12vh auto; }
+.ah { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--gold); font-size: 12px; }
+#stage { position: fixed; inset: 0; background: #070b12; }
+#stage canvas { width: 100%; height: 100%; display: block; }
+.hud { position: absolute; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center; }
+.leave { position: absolute; top: 12px; left: 12px; width: 36px; height: 36px; }
+.chatbox { position: absolute; bottom: 16px; right: 16px; width: min(92vw, 360px); display: flex; gap: 8px; }
+.toast { position: absolute; bottom: 70px; right: 16px; color: var(--gold); font-size: 13px; }
+.modal { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: grid; place-items: center; }
+.err { color: #f0a0a0; font-size: 14px; }
+.ok { color: var(--gold); font-size: 14px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+const SUPABASE_URL = "https://jbqenbfksnpkwwrvfybl.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpicWVuYmZrc25wa3d3cnZmeWJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0NzkxMjksImV4cCI6MjEwNjA1NTEyOX0.R0OOeXo4nFN3nAhvh3D8iOub_lJb4Ni7PDrjKgaljdA";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+const domain = "accounts.sohdblox.app";
+const app = document.getElementById("app");
+const state = { session: null, profile: null, page: "home", games: [], myGames: [], selected: null, servers: [] };
+function emailOf(u) { return u.trim().toLowerCase() + "@" + domain; }
+function el(html) { const d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstElementChild; }
+function escapeHtml(s) { return String(s || "").replace(/[&<>"']/g, function(c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+async function refreshProfile() {
+  if (!state.session) { state.profile = null; return; }
+  const { data } = await sb.from("profiles").select("*").eq("id", state.session.user.id).maybeSingle();
+  state.profile = data;
+}
+async function loadPublished() {
+  const { data } = await sb.from("games").select("*").eq("status", "published").order("play_count", { ascending: false });
+  state.games = data || [];
+}
+const defaultMap = { version: 1, sky: "#0b1220", spawnPoints: [{ position: [0, 2, 8] }], objects: [
+  { id: "floor", primitive: "box", position: [0, -0.5, 0], scale: [48, 1, 48], color: "#243044" },
+  { id: "spawn", primitive: "cylinder", position: [0, 0.15, 8], scale: [3, 0.3, 3], color: "#3ee0b4" }
+]};
+const defaultLua = "Sohdblox.OnPlayerAdded:Connect(function(player)\n  player:LoadCharacter()\nend)\n";
+function shell(body) {
+  const p = state.profile;
+  return '<header><a class="brand" href="#home"><span class="logo">S</span> Sohdblox</a><nav>' +
+    ["home","discover","games","friends","develop","profile"].map(function(x) {
+      const names = {home:"الرئيسية",discover:"اكتشف",games:"الألعاب",friends:"الأصدقاء",develop:"التطوير",profile:"حسابي"};
+      return '<button data-go="'+x+'" class="'+(state.page===x?"active":"")+'">'+names[x]+'</button>';
+    }).join("") + '</nav><span style="margin-inline-start:auto"></span>' +
+    (p ? '<span class="ah">'+p.ah_balance+' Ah</span> <span class="mute">'+escapeHtml(p.username)+'</span>' : '') +
+    '</header><div class="wrap">'+body+'</div>';
+}
+function render() {
+  if (!state.session && state.page !== "login" && state.page !== "signup") state.page = "login";
+  if (state.page === "login") {
+    app.innerHTML = '<div class="auth box"><div class="brand"><span class="logo">S</span> Sohdblox</div><h1>دخول</h1><form id="f" class="grid" style="grid-template-columns:1fr"><input name="u" placeholder="اسم المستخدم" required /><input name="p" type="password" placeholder="كلمة المرور" required /><button class="btn">دخول</button><p class="err" id="err"></p><button type="button" class="btn2" data-go="signup">حساب جديد</button></form></div>';
+    app.querySelector("#f").onsubmit = async function(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const { error } = await sb.auth.signInWithPassword({ email: emailOf(fd.get("u")), password: fd.get("p") });
+      app.querySelector("#err").textContent = error ? error.message : "";
+    };
+  } else if (state.page === "signup") {
+    app.innerHTML = '<div class="auth box"><div class="brand"><span class="logo">S</span> Sohdblox</div><h1>حساب جديد</h1><form id="f" class="grid" style="grid-template-columns:1fr"><input name="u" placeholder="اسم المستخدم" required /><input name="p" type="password" placeholder="كلمة المرور 8+" required /><button class="btn">إنشاء</button><p class="err" id="err"></p><button type="button" class="btn2" data-go="login">عندي حساب</button></form></div>';
+    app.querySelector("#f").onsubmit = async function(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const u = String(fd.get("u")).trim();
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{2,19}$/.test(u)) { app.querySelector("#err").textContent = "اسم المستخدم 3-20 ويبدأ بحرف."; return; }
+      const { error } = await sb.auth.signUp({ email: emailOf(u), password: String(fd.get("p")), options: { data: { username: u, display_name: u } } });
+      app.querySelector("#err").textContent = error ? error.message : "تم إنشاء الحساب. اضغط دخول.";
+    };
+  } else if (state.page === "home" || state.page === "discover" || state.page === "games") {
+    app.innerHTML = shell('<h1>Sohdblox</h1><p class="mute">اختر لعبة ثم اضغط لعب</p><div class="grid" id="g"></div>' + (state.games.length === 0 ? '<p class="mute">لا توجد ألعاب منشورة. ادخل التطوير وأنشئ واحدة.</p>' : ''));
+    paintGames("#g", state.games);
+  } else if (state.page === "game" && state.selected) {
+    const g = state.selected;
+    app.innerHTML = shell('<div class="thumb" style="height:180px">'+escapeHtml(g.name[0])+'</div><div class="row"><div><h1>'+escapeHtml(g.name)+'</h1><p class="mute">'+(g.current_players||0)+' يلعبون</p></div><button class="btn" id="play">لعب</button></div><p class="err" id="err"></p>');
+    document.getElementById("play").onclick = function() { playPublic(g.id); };
+  } else if (state.page === "develop") {
+    app.innerHTML = shell('<h1>التطوير</h1><div class="box"><div class="row"><input id="n" placeholder="اسم اللعبة" /><button class="btn" id="c">إنشاء</button></div><p class="err" id="err"></p></div><div id="mine" class="grid" style="margin-top:16px"></div>');
+    document.getElementById("c").onclick = createGame;
+    document.getElementById("mine").innerHTML = state.myGames.map(function(g) {
+      return '<div class="card"><div class="thumb">'+escapeHtml(g.name[0])+'</div><b>'+escapeHtml(g.name)+'</b><p class="mute">'+g.status+'</p><button class="btn" data-play="'+g.id+'">لعب</button> <button class="btn2" data-pub="'+g.id+'">نشر</button></div>';
+    }).join("") || '<p class="mute">لا توجد مشاريع.</p>';
+    document.querySelectorAll("[data-play]").forEach(function(b) { b.onclick = function() { playPublic(b.getAttribute("data-play")); }; });
+    document.querySelectorAll("[data-pub]").forEach(function(b) { b.onclick = async function() { await sb.rpc("publish_game", { p_game_id: b.getAttribute("data-pub") }); await go("develop"); }; });
+  } else if (state.page === "friends") {
+    app.innerHTML = shell('<h1>الأصدقاء</h1><div class="row"><input id="fu" placeholder="اسم المستخدم" /><button class="btn" id="add">إضافة</button></div><p class="err" id="err"></p><div id="list"></div>');
+    loadFriends();
+    document.getElementById("add").onclick = addFriend;
+  } else if (state.page === "profile") {
+    const p = state.profile || {};
+    app.innerHTML = shell('<h1>'+escapeHtml(p.username||"")+'</h1><p class="mute">'+(p.ah_balance||0)+' Ah</p><button class="btn2" id="out">خروج</button>');
+    document.getElementById("out").onclick = function() { sb.auth.signOut(); };
+  }
+  app.querySelectorAll("[data-go]").forEach(function(b) { b.onclick = function() { go(b.getAttribute("data-go")); }; });
+}
+function paintGames(sel, games) {
+  const root = document.querySelector(sel); if (!root) return;
+  root.innerHTML = games.map(function(g) {
+    return '<button class="card" data-open="'+g.id+'" style="text-align:right"><div class="thumb">'+escapeHtml(g.name[0])+'</div><b>'+escapeHtml(g.name)+'</b></button>';
+  }).join("");
+  root.querySelectorAll("[data-open]").forEach(function(b) { b.onclick = function() { openGame(b.getAttribute("data-open")); }; });
+}
+async function go(page) {
+  state.page = page;
+  if (page === "develop") {
+    const { data } = await sb.from("games").select("*").eq("owner_id", state.profile.id).order("created_at", { ascending: false });
+    state.myGames = data || [];
+  }
+  if (page === "home" || page === "discover" || page === "games") await loadPublished();
+  render();
+}
+async function openGame(id) {
+  const { data } = await sb.from("games").select("*").eq("id", id).maybeSingle();
+  state.selected = data; state.page = "game"; render();
+}
+async function createGame() {
+  const name = document.getElementById("n").value.trim();
+  if (name.length < 3) { document.getElementById("err").textContent = "الاسم قصير"; return; }
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) + "-" + Math.random().toString(36).slice(2, 6);
+  const { data, error } = await sb.from("games").insert({ owner_id: state.profile.id, name: name, slug: slug, status: "draft", category: "adventure" }).select("*").single();
+  if (error) { document.getElementById("err").textContent = error.message; return; }
+  await sb.from("game_maps").insert({ game_id: data.id, name: "Main", map_data: defaultMap, is_active: true });
+  await sb.from("game_scripts").insert({ game_id: data.id, filename: "main.lua", source: defaultLua });
+  await sb.from("profiles").update({ role: "developer" }).eq("id", state.profile.id);
+  await go("develop");
+}
+async function playPublic(gameId) {
+  const { data, error } = await sb.rpc("find_or_create_public_server", { p_game_id: gameId });
+  if (error) { const box = document.getElementById("err"); if (box) box.textContent = error.message; else alert(error.message); return; }
+  const g = state.games.find(function(x){return x.id===gameId;}) || state.selected || { id: gameId, name: "Sohdblox" };
+  startPlay(g, data.id);
+}
+function startPlay(game, serverId) {
+  app.innerHTML = '<div id="stage"><canvas id="cv"></canvas><div class="hud"><span class="ah">'+escapeHtml(game.name||"Map")+'</span></div><button class="btn2 leave" id="x">X</button><form class="chatbox"><input id="chat" placeholder="دردشة" /><button class="btn2">إرسال</button></form><div class="toast" id="toast"></div></div>';
+  const canvas = document.getElementById("cv"); const ctx = canvas.getContext("2d");
+  const body = { x: 0, y: 1.2, z: 8, yaw: 0, vy: 0, grounded: true };
+  const keys = new Set();
+  function resize() { canvas.width = innerWidth; canvas.height = innerHeight; } resize();
+  addEventListener("resize", resize);
+  addEventListener("keydown", function(e) { keys.add(e.code); });
+  addEventListener("keyup", function(e) { keys.delete(e.code); });
+  let drag = false; canvas.onmousedown = function() { drag = true; };
+  addEventListener("mouseup", function() { drag = false; });
+  addEventListener("mousemove", function(e) { if (drag) body.yaw += e.movementX * 0.005; });
+  document.getElementById("x").onclick = async function() { await sb.rpc("leave_server", { p_server_id: serverId }); go("home"); };
+  document.querySelector(".chatbox").onsubmit = async function(e) {
+    e.preventDefault();
+    const raw = document.getElementById("chat").value.slice(0, 240);
+    document.getElementById("chat").value = "";
+    if (!raw || !state.profile) return;
+    await sb.from("chat_messages").insert({ server_id: serverId, user_id: state.profile.id, body: raw, filtered_body: raw });
+    document.getElementById("toast").textContent = state.profile.username + ": " + raw;
+  };
+  let last = performance.now();
+  function tick(now) {
+    if (!document.getElementById("cv")) return;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const f = (keys.has("KeyW")?1:0) - (keys.has("KeyS")?1:0);
+    const r = (keys.has("KeyD")?1:0) - (keys.has("KeyA")?1:0);
+    const fx = Math.sin(body.yaw), fz = -Math.cos(body.yaw);
+    body.x += (fx * f + Math.cos(body.yaw) * r) * 9 * dt;
+    body.z += (fz * f + Math.sin(body.yaw) * r) * 9 * dt;
+    if (keys.has("Space") && body.grounded) { body.vy = 8; body.grounded = false; }
+    body.vy -= 22 * dt; body.y += body.vy * dt;
+    if (body.y < 1) { body.y = 1; body.vy = 0; body.grounded = true; }
+    const w = canvas.width, h = canvas.height;
+    ctx.fillStyle = "#0b1220"; ctx.fillRect(0,0,w,h);
+    function proj(x,y,z) {
+      const dx = x-body.x, dy = y-body.y-1.1, dz = z-body.z;
+      const c = Math.cos(-body.yaw), s = Math.sin(-body.yaw);
+      const rx = dx*c - dz*s, rz = dx*s + dz*c;
+      if (rz < 0.4) return null;
+      const fov = 420; return { x: w/2 + rx*fov/rz, y: h/2 - dy*fov/rz, s: fov/rz };
+    }
+    const objs = [{ x:0,y:0,z:0,c:"#243044",w:80 }, { x:0,y:1,z:-16,c:"#c98a4a",w:28 }, { x:-12,y:1,z:-8,c:"#2f8f4e",w:20 }];
+    objs.forEach(function(o) {
+      const p = proj(o.x,o.y,o.z); if (!p) return;
+      ctx.fillStyle = o.c; const sz = Math.max(6, o.w * p.s * 0.04);
+      ctx.fillRect(p.x - sz/2, p.y - sz/2, sz, sz);
+    });
+    ctx.fillStyle = "#3ee0b4"; ctx.fillRect(w/2-8, h*0.62, 16, 28);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+async function loadFriends() {
+  if (!state.profile) return;
+  const { data } = await sb.from("friendships").select("*").or("requester_id.eq."+state.profile.id+",addressee_id.eq."+state.profile.id);
+  const list = document.getElementById("list"); if (!list) return;
+  list.innerHTML = (data||[]).length ? "طلبات/أصدقاء: "+(data||[]).length : "لا يوجد أصدقاء بعد";
+}
+async function addFriend() {
+  const name = document.getElementById("fu").value.trim();
+  const { data: t } = await sb.from("profiles").select("id").eq("username", name).maybeSingle();
+  if (!t) { document.getElementById("err").textContent = "المستخدم غير موجود"; return; }
+  const { error } = await sb.from("friendships").insert({ requester_id: state.profile.id, addressee_id: t.id, status: "pending" });
+  document.getElementById("err").textContent = error ? error.message : "تم الإرسال";
+}
+sb.auth.onAuthStateChange(async function(_e, session) {
+  state.session = session; await refreshProfile();
+  if (session) { state.page = "home"; await loadPublished(); } else state.page = "login";
+  render();
+});
+sb.auth.getSession().then(async function(res) {
+  state.session = res.data.session; await refreshProfile();
+  if (state.session) await loadPublished();
+  render();
+});
+  </script>
+</body>
+</html>
